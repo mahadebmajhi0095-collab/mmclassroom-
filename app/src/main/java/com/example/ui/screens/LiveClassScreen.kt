@@ -1,6 +1,13 @@
 package com.example.ui.screens
 
+import android.content.Context
+import android.media.AudioManager
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -8,6 +15,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.MessageEntity
+import com.example.data.ClassroomEntity
+import com.example.data.UserEntity
 import com.example.viewmodel.ClassroomViewModel
 import com.example.viewmodel.Stroke
 import kotlinx.coroutines.launch
@@ -77,11 +88,34 @@ fun LiveClassScreen(
     val isVoiceActive by viewModel.isVoiceActive.collectAsState()
     val activeSpeakerName by viewModel.activeSpeakerName.collectAsState()
 
+    val isRecordingActive by viewModel.isRecordingActive.collectAsState()
+    var recordingSeconds by remember { mutableStateOf(0) }
+    var showSaveRecordingDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isRecordingActive) {
+        if (isRecordingActive) {
+            recordingSeconds = 0
+            while (true) {
+                kotlinx.coroutines.delay(1000)
+                recordingSeconds++
+            }
+        } else {
+            recordingSeconds = 0
+        }
+    }
+
+    val formattedDuration = remember(recordingSeconds) {
+        val mins = recordingSeconds / 60
+        val secs = recordingSeconds % 60
+        String.format("%02d:%02d", mins, secs)
+    }
+
     // Messaging input
     var chatInputText by remember { mutableStateOf("") }
     val chatListState = rememberLazyListState()
 
     var showQuizDialog by remember { mutableStateOf(false) }
+    var activeLiveTab by remember { mutableStateOf("BOARD") }
 
     // Drawing variables
     var currentPathPoints = remember { mutableStateListOf<Offset>() }
@@ -142,6 +176,30 @@ fun LiveClassScreen(
                             color = Color(0xFFD32F2F),
                             letterSpacing = 1.sp
                         )
+
+                        if (isRecordingActive) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier
+                                    .background(Color(0xFFFFEBEE), shape = RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFD32F2F))
+                                )
+                                Text(
+                                    text = "REC $formattedDuration",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFD32F2F)
+                                )
+                            }
+                        }
                     }
                     Text(
                         text = classroom?.name ?: "Interactive Board Room",
@@ -156,7 +214,8 @@ fun LiveClassScreen(
                 // Header tools for all
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.horizontalScroll(rememberScrollState())
                 ) {
                     // Online students counter button
                     Row(
@@ -174,6 +233,40 @@ fun LiveClassScreen(
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    // Recording button for teacher
+                    if (user?.role == "TEACHER") {
+                        Button(
+                            onClick = {
+                                if (isRecordingActive) {
+                                    showSaveRecordingDialog = true
+                                } else {
+                                    viewModel.startRecording()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isRecordingActive) Color(0xFFFFEBEE) else Color(0xFFE1F5FE),
+                                contentColor = if (isRecordingActive) Color(0xFFC62828) else Color(0xFF0288D1)
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.testTag("record_class_btn")
+                        ) {
+                            Icon(
+                                imageVector = if (isRecordingActive) Icons.Default.Stop else Icons.Default.Videocam,
+                                contentDescription = null,
+                                tint = if (isRecordingActive) Color(0xFFC62828) else Color(0xFF0288D1),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isRecordingActive) "Stop Rec" else "Record",
+                                color = if (isRecordingActive) Color(0xFFC62828) else Color(0xFF0288D1),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
 
                     // Simulation Trigger Button (Simulates student leaving class)
@@ -216,8 +309,47 @@ fun LiveClassScreen(
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                // SECTION 1: THE INTERACTIVE BOARD (Whiteboard / Blackboard)
-                Card(
+                // Tab Row to select between Whiteboard/Blackboard and Jitsi Video Call
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { activeLiveTab = "BOARD" },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (activeLiveTab == "BOARD") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = if (activeLiveTab == "BOARD") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f).testTag("tab_whiteboard_btn"),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Gesture, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Interactive Board", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = { activeLiveTab = "VIDEO" },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (activeLiveTab == "VIDEO") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = if (activeLiveTab == "VIDEO") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f).testTag("tab_video_call_btn"),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.VideoCameraFront, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Live Video Call", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                if (activeLiveTab == "BOARD") {
+                    // SECTION 1: THE INTERACTIVE BOARD (Whiteboard / Blackboard)
+                    Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1.2f)
@@ -642,82 +774,97 @@ fun LiveClassScreen(
                         }
                     }
                 }
-
-                // SECTION 2: CANVAS CONTROLS (Colors, Eraser, Undo, Clear)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Color Palette
-                    val colors = listOf(Color.White, Color.Yellow, Color.Green, Color.Cyan, Color.Red, Color.Magenta)
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                } else {
+                    // JITSI VIDEO CALL INTEGRATION PANEL (Height weight matched perfectly)
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1.2f)
+                            .padding(10.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.outline)
                     ) {
-                        colors.forEach { col ->
-                            // Map black for Whiteboard since White is default blackboard color
-                            val mappedCol = if (col == Color.White && boardStyle == "WHITEBOARD") Color.Black else col
-                            val isSelected = currentColor == mappedCol && !isEraser
-                            val borderCol = if (boardStyle == "WHITEBOARD") Color.LightGray else Color.White
-                            Box(
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clip(CircleShape)
-                                    .background(if (isSelected) borderCol else Color.Transparent)
-                                    .padding(if (isSelected) 3.dp else 0.dp)
-                                    .clip(CircleShape)
-                                    .background(mappedCol)
-                                    .clickable { viewModel.selectColor(mappedCol) }
-                                    .testTag("color_${mappedCol.value}")
-                            )
-                        }
-
-                        // Eraser Tool
-                        IconButton(
-                            onClick = { viewModel.enableEraser(!isEraser) },
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isEraser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer)
-                                .testTag("eraser_tool")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CleaningServices,
-                                contentDescription = "Eraser",
-                                tint = if (isEraser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
+                        LiveVideoConferenceLayout(classroom, user, viewModel, context)
                     }
+                }
 
-                    // Undo & Clear
+                if (activeLiveTab == "BOARD") {
+                    // SECTION 2: CANVAS CONTROLS (Colors, Eraser, Undo, Clear)
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(
-                            onClick = { viewModel.undoDrawing() },
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.secondaryContainer)
-                                .testTag("draw_undo")
+                        // Color Palette
+                        val colors = listOf(Color.White, Color.Yellow, Color.Green, Color.Cyan, Color.Red, Color.Magenta)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Undo, contentDescription = "Undo", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            colors.forEach { col ->
+                                // Map black for Whiteboard since White is default blackboard color
+                                val mappedCol = if (col == Color.White && boardStyle == "WHITEBOARD") Color.Black else col
+                                val isSelected = currentColor == mappedCol && !isEraser
+                                val borderCol = if (boardStyle == "WHITEBOARD") Color.LightGray else Color.White
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isSelected) borderCol else Color.Transparent)
+                                        .padding(if (isSelected) 3.dp else 0.dp)
+                                        .clip(CircleShape)
+                                        .background(mappedCol)
+                                        .clickable { viewModel.selectColor(mappedCol) }
+                                        .testTag("color_${mappedCol.value}")
+                                )
+                            }
+
+                            // Eraser Tool
+                            IconButton(
+                                onClick = { viewModel.enableEraser(!isEraser) },
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isEraser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer)
+                                    .testTag("eraser_tool")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CleaningServices,
+                                    contentDescription = "Eraser",
+                                    tint = if (isEraser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
 
-                        IconButton(
-                            onClick = { viewModel.clearDrawing() },
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFFFEBEE))
-                                .testTag("draw_clear")
+                        // Undo & Clear
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Clear Board", tint = Color(0xFFC62828), modifier = Modifier.size(16.dp))
+                            IconButton(
+                                onClick = { viewModel.undoDrawing() },
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                                    .testTag("draw_undo")
+                            ) {
+                                Icon(Icons.Default.Undo, contentDescription = "Undo", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            }
+
+                            IconButton(
+                                onClick = { viewModel.clearDrawing() },
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFFFEBEE))
+                                    .testTag("draw_clear")
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Clear Board", tint = Color(0xFFC62828), modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
                 }
@@ -991,6 +1138,140 @@ fun LiveClassScreen(
                 onDismiss = { showQuizDialog = false }
             )
         }
+
+        // Save Recording Dialog
+        if (showSaveRecordingDialog) {
+            var recordingTitle by remember { mutableStateOf("Lecture: ${classroom?.name ?: "Interactive Session"}") }
+            var recordingDescription by remember { mutableStateOf("Interactive whiteboard session covering ${classroom?.subject ?: "class materials"}.") }
+            val finalDurationText = formattedDuration
+            
+            Dialog(onDismissRequest = { showSaveRecordingDialog = false }) {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2235)),
+                    border = BorderStroke(1.dp, Color(0xFF2B3047))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Videocam,
+                                contentDescription = null,
+                                tint = Color(0xFF4CAF50),
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Text(
+                                text = "Save Recorded Lecture",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            )
+                        }
+
+                        Text(
+                            text = "The live class recording is ready! Provide a title and description to save and publish it automatically for your students.",
+                            fontSize = 12.sp,
+                            color = Color.LightGray
+                        )
+
+                        // Display Duration
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF131622), shape = RoundedCornerShape(8.dp))
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Recording Duration", fontSize = 12.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = finalDurationText,
+                                fontSize = 14.sp,
+                                color = Color(0xFF81C784),
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = recordingTitle,
+                            onValueChange = { recordingTitle = it },
+                            label = { Text("Lecture Title") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("save_recording_title_input"),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedLabelColor = Color(0xFF81C784),
+                                unfocusedLabelColor = Color.Gray,
+                                focusedBorderColor = Color(0xFF4CAF50),
+                                unfocusedBorderColor = Color(0xFF2B3047)
+                            )
+                        )
+
+                        OutlinedTextField(
+                            value = recordingDescription,
+                            onValueChange = { recordingDescription = it },
+                            label = { Text("Lecture Description") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("save_recording_desc_input"),
+                            maxLines = 3,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedLabelColor = Color(0xFF81C784),
+                                unfocusedLabelColor = Color.Gray,
+                                focusedBorderColor = Color(0xFF4CAF50),
+                                unfocusedBorderColor = Color(0xFF2B3047)
+                            )
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = {
+                                showSaveRecordingDialog = false
+                            }) {
+                                Text("Discard", color = Color(0xFFEF5350))
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    if (recordingTitle.trim().isNotEmpty()) {
+                                        viewModel.addCustomRecordedClass(
+                                            title = recordingTitle,
+                                            duration = finalDurationText,
+                                            desc = recordingDescription
+                                        )
+                                        viewModel.stopRecording()
+                                        showSaveRecordingDialog = false
+                                        Toast.makeText(context, "Recording saved and published successfully!", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                enabled = recordingTitle.trim().isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50), contentColor = Color.White),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("save_recording_confirm_btn")
+                            ) {
+                                Text("Save & Publish")
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1111,4 +1392,428 @@ fun ChatBubble(message: MessageEntity, isMe: Boolean) {
 
 fun msgIsSystem(name: String): Boolean {
     return name.contains("System", ignoreCase = true) || name.contains("Alert", ignoreCase = true)
+}
+
+@Composable
+fun LiveVideoConferenceLayout(
+    classroom: ClassroomEntity?,
+    user: UserEntity?,
+    viewModel: ClassroomViewModel,
+    context: Context
+) {
+    var videoMode by remember { mutableStateOf("SIMULATOR") } // "JITSI" or "SIMULATOR"
+    var isMicMuted by remember { mutableStateOf(false) }
+    var isCameraOff by remember { mutableStateOf(false) }
+    var isSpeakerphoneOn by remember { mutableStateOf(true) }
+
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121420))
+            .padding(8.dp)
+    ) {
+        // Toggle Mode Selector (Jitsi Web vs Multi-user Grid)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = { videoMode = "JITSI" },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (videoMode == "JITSI") Color(0xFF1E88E5) else Color(0xFF1F2335),
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f).height(36.dp).testTag("video_mode_jitsi_btn")
+            ) {
+                Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Jitsi Web Meet", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Button(
+                onClick = { videoMode = "SIMULATOR" },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (videoMode == "SIMULATOR") Color(0xFF1E88E5) else Color(0xFF1F2335),
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f).height(36.dp).testTag("video_mode_sim_btn")
+            ) {
+                Icon(Icons.Default.GridView, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Class Video Grid", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .background(Color(0xFF0F111A), shape = RoundedCornerShape(12.dp))
+                .border(BorderStroke(1.dp, Color(0xFF1F2335)), shape = RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(12.dp))
+        ) {
+            if (videoMode == "JITSI") {
+                // Real WebView loading public Jitsi Meet room
+                AndroidView(
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.apply {
+                                javaScriptEnabled = true
+                                domStorageEnabled = true
+                                mediaPlaybackRequiresUserGesture = false
+                                useWideViewPort = true
+                                loadWithOverviewMode = true
+                            }
+                            webViewClient = WebViewClient()
+                            webChromeClient = object : WebChromeClient() {
+                                override fun onPermissionRequest(request: PermissionRequest) {
+                                    request.grant(request.resources)
+                                }
+                            }
+                            val safeId = (classroom?.id ?: "General").replace(" ", "-").trim()
+                            val roomUrl = "https://meet.jit.si/MMClassroom-$safeId"
+                            loadUrl(roomUrl)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize().testTag("jitsi_webview")
+                )
+            } else {
+                // Multi-participant interactive grid simulator
+                val activeSpeaker by viewModel.activeSpeakerName.collectAsState()
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Row 1: Teacher & Amit
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Teacher Participant
+                        VideoParticipantCard(
+                            name = classroom?.teacherName ?: "Instructor",
+                            role = "TEACHER",
+                            isSpeaking = activeSpeaker == (classroom?.teacherName ?: "Instructor"),
+                            isMuted = false,
+                            isVideoOff = false,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        // Student 1: Amit Sharma
+                        VideoParticipantCard(
+                            name = "Amit Sharma",
+                            role = "STUDENT",
+                            isSpeaking = activeSpeaker == "Amit Sharma",
+                            isMuted = false,
+                            isVideoOff = false,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // Row 2: Priya Patel & User (Self)
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Student 2: Priya Patel
+                        VideoParticipantCard(
+                            name = "Priya Patel",
+                            role = "STUDENT",
+                            isSpeaking = activeSpeaker == "Priya Patel",
+                            isMuted = true,
+                            isVideoOff = false,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        // Self Participant
+                        VideoParticipantCard(
+                            name = "${user?.name ?: "Me"} (You)",
+                            role = user?.role ?: "STUDENT",
+                            isSpeaking = false,
+                            isMuted = isMicMuted,
+                            isVideoOff = isCameraOff,
+                            isSelf = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Live Controls Action Bar at the Bottom of video panel
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Mic Toggle
+            IconButton(
+                onClick = {
+                    isMicMuted = !isMicMuted
+                    audioManager.isMicrophoneMute = isMicMuted
+                    Toast.makeText(
+                        context, 
+                        if (isMicMuted) "Microphone muted" else "Microphone unmuted", 
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(if (isMicMuted) Color(0xFFEF5350) else Color(0xFF2E7D32), shape = CircleShape)
+                    .testTag("video_mic_toggle_btn")
+            ) {
+                Icon(
+                    imageVector = if (isMicMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                    contentDescription = "Toggle Mic",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            // Camera Toggle
+            IconButton(
+                onClick = {
+                    isCameraOff = !isCameraOff
+                    Toast.makeText(
+                        context, 
+                        if (isCameraOff) "Camera feed disabled" else "Camera feed active", 
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(if (isCameraOff) Color(0xFFEF5350) else Color(0xFF1E88E5), shape = CircleShape)
+                    .testTag("video_camera_toggle_btn")
+            ) {
+                Icon(
+                    imageVector = if (isCameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                    contentDescription = "Toggle Camera",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            // Speaker Toggle (Routing audio output using AudioManager)
+            IconButton(
+                onClick = {
+                    isSpeakerphoneOn = !isSpeakerphoneOn
+                    audioManager.isSpeakerphoneOn = isSpeakerphoneOn
+                    Toast.makeText(
+                        context, 
+                        if (isSpeakerphoneOn) "Output routed to Speakerphone" else "Output routed to Earpiece", 
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(if (isSpeakerphoneOn) Color(0xFF8E24AA) else Color(0xFF757575), shape = CircleShape)
+                    .testTag("video_speaker_toggle_btn")
+            ) {
+                Icon(
+                    imageVector = if (isSpeakerphoneOn) Icons.Default.VolumeUp else Icons.Default.VolumeDown,
+                    contentDescription = "Toggle Speakerphone",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            // Simulated Active Speaker Trigger (Simulate Amit/Priya asking a question)
+            Button(
+                onClick = {
+                    val speakers = listOf("Amit Sharma", "Priya Patel", classroom?.teacherName ?: "Instructor")
+                    val randomSpeaker = speakers.random()
+                    viewModel.simulateActiveSpeaker(randomSpeaker)
+                    Toast.makeText(context, "$randomSpeaker is now speaking", Toast.LENGTH_SHORT).show()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3F51B5), contentColor = Color.White),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(34.dp).testTag("video_sim_speaker_btn")
+            ) {
+                Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(12.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Sim Speaker", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun VideoParticipantCard(
+    name: String,
+    role: String,
+    isSpeaking: Boolean,
+    isMuted: Boolean,
+    isVideoOff: Boolean,
+    isSelf: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxHeight()
+            .border(
+                border = BorderStroke(
+                    width = if (isSpeaking) 2.dp else 1.dp,
+                    color = if (isSpeaking) Color(0xFF4CAF50) else Color(0xFF1F2335)
+                ),
+                shape = RoundedCornerShape(8.dp)
+            ),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2235))
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            if (isVideoOff) {
+                // Video Off placeholder
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF131622)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color(0xFF2B3047), shape = CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = Color.LightGray,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Camera Off", fontSize = 10.sp, color = Color.Gray)
+                    }
+                }
+            } else {
+                // Simulated camera stream color waves
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                                colors = if (isSelf) {
+                                    listOf(Color(0xFF1B2E3C), Color(0xFF12232E))
+                                } else if (role == "TEACHER") {
+                                    listOf(Color(0xFF2A1B3D), Color(0xFF1D122E))
+                                } else {
+                                    listOf(Color(0xFF1B3D2B), Color(0xFF122E1F))
+                                }
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Audio spectrum bars if speaking
+                    if (isSpeaking) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            repeat(3) { index ->
+                                val infiniteTransition = rememberInfiniteTransition(label = "audio_bar_$index")
+                                val heightScale by infiniteTransition.animateFloat(
+                                    initialValue = 12f,
+                                    targetValue = 28f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(durationMillis = 300 + index * 100, easing = LinearEasing),
+                                        repeatMode = RepeatMode.Reverse
+                                    ),
+                                    label = "audio_bar_scale"
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .width(3.dp)
+                                        .height(heightScale.dp)
+                                        .background(Color(0xFF4CAF50), shape = RoundedCornerShape(2.dp))
+                                )
+                            }
+                        }
+                    } else {
+                        // User avatar initials
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color.White.copy(alpha = 0.08f), shape = CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = name.split(" ").mapNotNull { it.firstOrNull() }.joinToString("").take(2).uppercase(),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Badge with Name & Muted Status
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(4.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = name,
+                    fontSize = 10.sp,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 60.dp)
+                )
+
+                if (isMuted) {
+                    Icon(
+                        imageVector = Icons.Default.MicOff,
+                        contentDescription = "Muted",
+                        tint = Color(0xFFEF5350),
+                        modifier = Modifier.size(10.dp)
+                    )
+                }
+            }
+
+            // Role Badge
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .background(
+                        color = if (role == "TEACHER") Color(0xFF8E24AA) else Color(0xFF78909C),
+                        shape = RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = role,
+                    fontSize = 8.sp,
+                    color = Color.White,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
+    }
 }

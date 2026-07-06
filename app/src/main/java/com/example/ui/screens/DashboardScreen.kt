@@ -29,6 +29,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.RadioButton
+import com.example.notifications.NotificationHelper
+import com.example.viewmodel.UpcomingSession
 import com.example.data.ClassroomEntity
 import com.example.viewmodel.ClassroomViewModel
 
@@ -44,6 +49,29 @@ fun DashboardScreen(
     val clipboardManager = LocalClipboardManager.current
     val user by viewModel.userState.collectAsState()
     val classrooms by viewModel.classroomsState.collectAsState()
+
+    // Notification states
+    val upcomingSessions by viewModel.upcomingSessions.collectAsState()
+    var isNotificationHubExpanded by remember { mutableStateOf(true) }
+    var showScheduleSessionDialog by remember { mutableStateOf(false) }
+    var scheduledSessionTitle by remember { mutableStateOf("") }
+    var scheduledSessionDelay by remember { mutableStateOf("15") }
+    var selectedClassroomId by remember { mutableStateOf("") }
+
+    var hasNotificationPermission by remember {
+        mutableStateOf(NotificationHelper.isNotificationPermissionGranted(context))
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasNotificationPermission = isGranted
+        if (isGranted) {
+            Toast.makeText(context, "🔔 Notifications Enabled!", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "❌ Notification Permission Denied!", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
@@ -265,6 +293,229 @@ fun DashboardScreen(
                         modifier = Modifier.testTag("dashboard_join_btn")
                     ) {
                         Text("Join Link", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // Collapsible Notification Hub & Alert Center
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp)
+                ) {
+                    // Header Row: Expand/Collapse toggle
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isNotificationHubExpanded = !isNotificationHubExpanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Class Alert & Notification Hub",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Permission status pill
+                            if (hasNotificationPermission) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(Color(0xFFE8F5E9), shape = RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Box(modifier = Modifier.size(6.dp).background(Color(0xFF2E7D32), CircleShape))
+                                        Text("Active", color = Color(0xFF2E7D32), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .background(Color(0xFFFFEBEE), shape = RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                                permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                            } else {
+                                                Toast.makeText(context, "System alerts already active.", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Box(modifier = Modifier.size(6.dp).background(Color(0xFFC62828), CircleShape))
+                                        Text("Enable Alerts", color = Color(0xFFC62828), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            
+                            Icon(
+                                imageVector = if (isNotificationHubExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = "Toggle Section"
+                            )
+                        }
+                    }
+                    
+                    if (isNotificationHubExpanded) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        
+                        Text(
+                            text = "Set notifications/reminders for upcoming live class sessions and quizzes. Receive push notifications on release.",
+                            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        
+                        // Upcoming Sessions List
+                        if (upcomingSessions.isEmpty()) {
+                            Text(
+                                text = "No scheduled live sessions available.",
+                                style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray, fontWeight = FontWeight.Medium),
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                upcomingSessions.take(3).forEach { session ->
+                                    val isExpired = session.scheduledTimeMillis < System.currentTimeMillis()
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = session.title,
+                                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = session.classroomName,
+                                                        fontSize = 11.sp,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                    Text(
+                                                        text = "•",
+                                                        fontSize = 11.sp,
+                                                        color = Color.LightGray
+                                                    )
+                                                    Text(
+                                                        text = formatSessionTime(session.scheduledTimeMillis),
+                                                        fontSize = 11.sp,
+                                                        color = if (isExpired) Color.Gray else MaterialTheme.colorScheme.secondary,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                            
+                                            // Alarm Toggle
+                                            IconButton(
+                                                onClick = {
+                                                    if (!hasNotificationPermission) {
+                                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                                            permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                                        } else {
+                                                            viewModel.toggleSessionNotification(session.id)
+                                                            Toast.makeText(context, "Alarm status updated!", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    } else {
+                                                        viewModel.toggleSessionNotification(session.id)
+                                                        val text = if (session.notified) "Notification Reminder cancelled." else "Reminder set successfully!"
+                                                        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+                                                    }
+                                                },
+                                                modifier = Modifier.size(40.dp).testTag("toggle_notif_${session.id}")
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (session.notified) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
+                                                    contentDescription = "Toggle reminder",
+                                                    tint = if (session.notified) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Teacher Controls section
+                        if (user?.role == "TEACHER") {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (classrooms.isNotEmpty()) {
+                                            selectedClassroomId = classrooms.first().id
+                                        }
+                                        showScheduleSessionDialog = true
+                                    },
+                                    modifier = Modifier.weight(1f).height(40.dp).testTag("teacher_schedule_session_btn"),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Icon(Icons.Default.AddAlarm, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Schedule Live", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                
+                                Button(
+                                    onClick = {
+                                        val activeRoom = classrooms.firstOrNull()
+                                        if (activeRoom != null) {
+                                            viewModel.simulateQuizNotification("Calculus Midterm Assessment", activeRoom.id)
+                                            Toast.makeText(context, "Simulated quiz notification sent!", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            Toast.makeText(context, "Please create a classroom first.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f).height(40.dp).testTag("teacher_simulate_quiz_btn"),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Icon(Icons.Default.Quiz, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Simulate Quiz Alert", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -633,6 +884,152 @@ fun DashboardScreen(
             }
         }
     }
+
+    // Dialog: Schedule Live Session
+    if (showScheduleSessionDialog) {
+        Dialog(onDismissRequest = { showScheduleSessionDialog = false }) {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "Schedule Upcoming Session",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = scheduledSessionTitle,
+                        onValueChange = { scheduledSessionTitle = it },
+                        label = { Text("Session Title") },
+                        placeholder = { Text("e.g. Solving Double Integrals") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("schedule_session_title_input"),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = scheduledSessionDelay,
+                        onValueChange = { scheduledSessionDelay = it },
+                        label = { Text("Notification Trigger Delay (seconds)") },
+                        placeholder = { Text("e.g. 15") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("schedule_session_delay_input"),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+
+                    // Classroom Selection
+                    Text(
+                        text = "Select Classroom:",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                    
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        classrooms.forEach { room ->
+                            val isSelected = selectedClassroomId == room.id
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                    .clickable { selectedClassroomId = room.id }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = { selectedClassroomId = room.id }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(room.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Text(room.subject, fontSize = 11.sp, color = Color.Gray)
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { showScheduleSessionDialog = false }) {
+                            Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Button(
+                            onClick = {
+                                if (scheduledSessionTitle.trim().isNotEmpty() && selectedClassroomId.isNotEmpty()) {
+                                    val delaySecs = scheduledSessionDelay.trim().toIntOrNull() ?: 15
+                                    viewModel.scheduleUpcomingSession(
+                                        title = scheduledSessionTitle,
+                                        delaySeconds = delaySecs,
+                                        classroomId = selectedClassroomId
+                                    )
+                                    scheduledSessionTitle = ""
+                                    showScheduleSessionDialog = false
+                                    Toast.makeText(context, "Live class session scheduled!", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            enabled = scheduledSessionTitle.trim().isNotEmpty() && selectedClassroomId.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("confirm_schedule_session_btn")
+                        ) {
+                            Text("Schedule & Arm")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun formatSessionTime(scheduledTimeMillis: Long): String {
+    val diff = scheduledTimeMillis - System.currentTimeMillis()
+    if (diff <= 0) {
+        return "Active/Started"
+    }
+    val seconds = diff / 1000
+    if (seconds < 60) {
+        return "Starts in ${seconds}s"
+    }
+    val minutes = seconds / 60
+    if (minutes < 60) {
+        return "Starts in ${minutes}m"
+    }
+    val hours = minutes / 60
+    return "Starts in ${hours}h"
 }
 
 @Composable

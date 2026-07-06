@@ -20,10 +20,12 @@ import com.example.ui.screens.RecordedClassesScreen
 import com.example.ui.screens.StudentProgressScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.ClassroomViewModel
+import com.example.notifications.NotificationHelper
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        NotificationHelper.createNotificationChannels(this)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {

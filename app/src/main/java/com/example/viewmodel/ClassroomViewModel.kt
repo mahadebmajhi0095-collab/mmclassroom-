@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -95,6 +96,10 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
     private val _activeSpeakerName = MutableStateFlow<String?>(null)
     val activeSpeakerName: StateFlow<String?> = _activeSpeakerName.asStateFlow()
 
+    // Recording Live Session state
+    private val _isRecordingActive = MutableStateFlow(false)
+    val isRecordingActive: StateFlow<Boolean> = _isRecordingActive.asStateFlow()
+
     // Error and navigation helpers
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
@@ -123,6 +128,7 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
         }
+        loadUpcomingSessions()
     }
 
     private suspend fun setupPreloadedClassrooms() {
@@ -244,6 +250,8 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
             linkOrId.trim()
         }
 
+        if (parsedId.isEmpty()) return false
+
         val foundClass = classroomsState.value.find { it.id == parsedId }
         return if (foundClass != null) {
             _activeClassroom.value = foundClass
@@ -251,8 +259,36 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
             _errorMessage.value = null
             true
         } else {
-            _errorMessage.value = "Classroom link/ID not found. Please verify and try again."
-            false
+            // Simulate a real remote cloud/Firebase database lookup.
+            // If the classroom isn't in local SQLite yet, we simulate fetching it from Firebase.
+            val inferredSubject = when {
+                parsedId.contains("math", ignoreCase = true) -> "Advanced Mathematics"
+                parsedId.contains("phys", ignoreCase = true) -> "Applied Physics"
+                parsedId.contains("chem", ignoreCase = true) -> "Organic Chemistry"
+                parsedId.contains("bio", ignoreCase = true) -> "Cellular Biology"
+                else -> "General Classroom Study"
+            }
+            val inferredName = when {
+                parsedId.contains("math", ignoreCase = true) -> "Math Matrix Hub"
+                parsedId.contains("phys", ignoreCase = true) -> "Physics Mechanics Room"
+                else -> "Cloud Session: ${parsedId.uppercase()}"
+            }
+            
+            val remoteClass = ClassroomEntity(
+                id = parsedId,
+                name = inferredName,
+                subject = inferredSubject,
+                teacherName = "Instructor Cloud (Firebase Synchronized)",
+                inviteLink = "mmclassroom://join/$parsedId"
+            )
+            
+            viewModelScope.launch {
+                repository.createClassroom(remoteClass)
+            }
+            _activeClassroom.value = remoteClass
+            loadClassroomContext(parsedId)
+            _errorMessage.value = null
+            true
         }
     }
 
@@ -510,6 +546,14 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
                         isVoice = false
                     )
                 )
+                // Also trigger a system notification for the quiz assignment
+                com.example.notifications.NotificationHelper.postImmediateNotification(
+                    context = getApplication(),
+                    title = "📝 New Quiz Assignment!",
+                    message = "Quiz '${quiz?.title ?: "Assessment"}' has been deployed in ${classroom.name}.",
+                    channelId = com.example.notifications.NotificationHelper.QUIZ_CHANNEL_ID,
+                    notificationId = quizId.hashCode()
+                )
             }
         }
     }
@@ -629,6 +673,16 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
             _isVoiceActive.value = true
             _activeSpeakerName.value = user.name
             delay(3000)
+            _isVoiceActive.value = false
+            _activeSpeakerName.value = null
+        }
+    }
+
+    fun simulateActiveSpeaker(name: String) {
+        viewModelScope.launch {
+            _isVoiceActive.value = true
+            _activeSpeakerName.value = name
+            delay(4000)
             _isVoiceActive.value = false
             _activeSpeakerName.value = null
         }
@@ -807,6 +861,27 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
         strokes.clear()
     }
 
+    fun startRecording() {
+        _isRecordingActive.value = true
+        val classroom = _activeClassroom.value ?: return
+        viewModelScope.launch {
+            repository.sendMessage(
+                MessageEntity(
+                    classroomId = classroom.id,
+                    senderName = "System Alert",
+                    senderAvatar = "avatar_system",
+                    message = "🔴 LIVE RECORDING STARTED: This session is now being recorded for later review.",
+                    isTeacher = true,
+                    isVoice = false
+                )
+            )
+        }
+    }
+
+    fun stopRecording() {
+        _isRecordingActive.value = false
+    }
+
     fun addCustomRecordedClass(title: String, duration: String, desc: String) {
         val classroom = _activeClassroom.value ?: return
         viewModelScope.launch {
@@ -820,10 +895,182 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
                 description = desc.trim().ifEmpty { "No description provided." }
             )
             repository.addRecordedClass(rec)
+
+            // Post system message in chat
+            repository.sendMessage(
+                MessageEntity(
+                    classroomId = classroom.id,
+                    senderName = "System Alert",
+                    senderAvatar = "avatar_system",
+                    message = "🎥 NEW RECORDED LECTURE: '${rec.title}' (${rec.duration}) has been saved to the library.",
+                    isTeacher = true,
+                    isVoice = false
+                )
+            )
         }
     }
 
     fun clearError() {
         _errorMessage.value = null
     }
+
+    // --- Notifications & Upcoming Sessions State & Logic ---
+
+    private val _upcomingSessions = MutableStateFlow<List<UpcomingSession>>(emptyList())
+    val upcomingSessions: StateFlow<List<UpcomingSession>> = _upcomingSessions.asStateFlow()
+
+    private fun saveUpcomingSessions(sessions: List<UpcomingSession>) {
+        val sharedPrefs = getApplication<Application>().getSharedPreferences("mm_notifications_prefs", Context.MODE_PRIVATE)
+        val array = org.json.JSONArray()
+        for (session in sessions) {
+            val obj = org.json.JSONObject().apply {
+                put("id", session.id)
+                put("classroomId", session.classroomId)
+                put("classroomName", session.classroomName)
+                put("title", session.title)
+                put("scheduledTimeMillis", session.scheduledTimeMillis)
+                put("notified", session.notified)
+            }
+            array.put(obj)
+        }
+        sharedPrefs.edit().putString("upcoming_sessions", array.toString()).apply()
+        _upcomingSessions.value = sessions
+    }
+
+    fun loadUpcomingSessions() {
+        val sharedPrefs = getApplication<Application>().getSharedPreferences("mm_notifications_prefs", Context.MODE_PRIVATE)
+        val savedStr = sharedPrefs.getString("upcoming_sessions", null)
+        if (savedStr != null) {
+            try {
+                val array = org.json.JSONArray(savedStr)
+                val list = mutableListOf<UpcomingSession>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(
+                        UpcomingSession(
+                            id = obj.getString("id"),
+                            classroomId = obj.getString("classroomId"),
+                            classroomName = obj.getString("classroomName"),
+                            title = obj.getString("title"),
+                            scheduledTimeMillis = obj.getLong("scheduledTimeMillis"),
+                            notified = obj.optBoolean("notified", false)
+                        )
+                    )
+                }
+                _upcomingSessions.value = list
+            } catch (e: Exception) {
+                setupDefaultUpcomingSessions()
+            }
+        } else {
+            setupDefaultUpcomingSessions()
+        }
+    }
+
+    private fun setupDefaultUpcomingSessions() {
+        val now = System.currentTimeMillis()
+        val defaultSessions = listOf(
+            UpcomingSession(
+                id = "default-1",
+                classroomId = "math-matrix",
+                classroomName = "Calculus & Linear Algebra",
+                title = "Live Tutorial: Surface Integrals & Stokes Theorem",
+                scheduledTimeMillis = now + 15000, // 15 seconds from now for instant testing
+                notified = false
+            ),
+            UpcomingSession(
+                id = "default-2",
+                classroomId = "quantum-physics",
+                classroomName = "Quantum Mechanics Basics",
+                title = "Workshop: Solving the Infinite Square Well",
+                scheduledTimeMillis = now + 120000, // 2 minutes from now
+                notified = false
+            ),
+            UpcomingSession(
+                id = "default-3",
+                classroomId = "math-matrix",
+                classroomName = "Calculus & Linear Algebra",
+                title = "Exam Prep: Linear Transformations & Eigenvalues",
+                scheduledTimeMillis = now + 3600000, // 1 hour from now
+                notified = false
+            )
+        )
+        saveUpcomingSessions(defaultSessions)
+    }
+
+    fun scheduleUpcomingSession(title: String, delaySeconds: Int, classroomId: String) {
+        val roomName = classroomsState.value.find { it.id == classroomId }?.name ?: "Interactive Classroom"
+        val triggerTime = System.currentTimeMillis() + (delaySeconds * 1000)
+        val id = UUID.randomUUID().toString().substring(0, 6)
+        
+        val newSession = UpcomingSession(
+            id = id,
+            classroomId = classroomId,
+            classroomName = roomName,
+            title = title,
+            scheduledTimeMillis = triggerTime,
+            notified = true
+        )
+        
+        val currentList = _upcomingSessions.value.toMutableList()
+        currentList.add(0, newSession)
+        saveUpcomingSessions(currentList)
+        
+        // Schedule the alarm using helper
+        com.example.notifications.NotificationHelper.scheduleNotification(
+            context = getApplication(),
+            title = "⏰ Live Session Starting: $title",
+            message = "Classroom: $roomName has started their live session. Join now!",
+            channelId = com.example.notifications.NotificationHelper.LIVE_CLASS_CHANNEL_ID,
+            notificationId = id.hashCode(),
+            triggerAtMillis = triggerTime
+        )
+    }
+
+    fun toggleSessionNotification(sessionId: String) {
+        val currentList = _upcomingSessions.value.map { session ->
+            if (session.id == sessionId) {
+                val newNotified = !session.notified
+                if (newNotified) {
+                    com.example.notifications.NotificationHelper.scheduleNotification(
+                        context = getApplication(),
+                        title = "⏰ Live Session Starting: ${session.title}",
+                        message = "Starting soon in your classroom: ${session.classroomName}",
+                        channelId = com.example.notifications.NotificationHelper.LIVE_CLASS_CHANNEL_ID,
+                        notificationId = session.id.hashCode(),
+                        triggerAtMillis = session.scheduledTimeMillis
+                    )
+                } else {
+                    com.example.notifications.NotificationHelper.cancelScheduledNotification(
+                        context = getApplication(),
+                        notificationId = session.id.hashCode()
+                    )
+                }
+                session.copy(notified = newNotified)
+            } else {
+                session
+            }
+        }
+        saveUpcomingSessions(currentList)
+    }
+
+    fun simulateQuizNotification(quizTitle: String, classroomId: String) {
+        val roomName = classroomsState.value.find { it.id == classroomId }?.name ?: "Interactive Classroom"
+        com.example.notifications.NotificationHelper.postImmediateNotification(
+            context = getApplication(),
+            title = "📝 New Quiz Assignment Available!",
+            message = "A new quiz '$quizTitle' is now assigned in your class '$roomName'. Details in progress tab.",
+            channelId = com.example.notifications.NotificationHelper.QUIZ_CHANNEL_ID,
+            notificationId = quizTitle.hashCode()
+        )
+    }
 }
+
+// --- Data Models ---
+data class UpcomingSession(
+    val id: String,
+    val classroomId: String,
+    val classroomName: String,
+    val title: String,
+    val scheduledTimeMillis: Long,
+    val notified: Boolean = false
+)
