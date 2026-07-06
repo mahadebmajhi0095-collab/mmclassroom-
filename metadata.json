@@ -1,0 +1,6 @@
+{
+  "name": "mm classroom",
+  "description": "A feature-rich teaching platform for hosting live and recorded classes with blackboard/whiteboard tools, student tracking, chat, voice, and promo codes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
