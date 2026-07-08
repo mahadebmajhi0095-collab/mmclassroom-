@@ -748,6 +748,70 @@ class ClassroomViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // Simulate real-time student drawing/annotation on the whiteboard
+    fun simulateStudentDrawing() {
+        val students = _onlineStudents.value
+        if (students.isEmpty()) return
+        val drawer = students.random()
+
+        // Generate coordinates for a random fun shape/annotation
+        val startX = (150..350).random().toFloat()
+        val startY = (200..450).random().toFloat()
+
+        val strokeColor = listOf(
+            Color(0xFF4CAF50), // Green
+            Color(0xFFFF9800), // Orange
+            Color(0xFF2196F3), // Blue
+            Color(0xFFE91E63), // Pink
+            Color(0xFF9C27B0), // Purple
+            Color(0xFFFFEB3B)  // Yellow
+        ).random()
+
+        // Generate a checkmark or cross shape
+        val points = if ((0..1).random() == 0) {
+            // A checkmark stroke
+            listOf(
+                Offset(startX, startY),
+                Offset(startX + 20f, startY + 30f),
+                Offset(startX + 60f, startY - 30f)
+            )
+        } else {
+            // A smiling curve stroke
+            listOf(
+                Offset(startX, startY),
+                Offset(startX + 15f, startY + 20f),
+                Offset(startX + 35f, startY + 20f),
+                Offset(startX + 50f, startY)
+            )
+        }
+
+        strokes.add(
+            Stroke(
+                points = points,
+                color = strokeColor,
+                width = 10f,
+                isEraser = false
+            )
+        )
+
+        // Also post a chat notification
+        val classroom = _activeClassroom.value
+        if (classroom != null) {
+            viewModelScope.launch {
+                repository.sendMessage(
+                    MessageEntity(
+                        classroomId = classroom.id,
+                        senderName = "System Alert",
+                        senderAvatar = "avatar_system",
+                        message = "📝 Student '$drawer' added an annotation to the interactive board.",
+                        isTeacher = false,
+                        isVoice = false
+                    )
+                )
+            }
+        }
+    }
+
     // Student Left - BIG RED POPUP SIMULATION
     fun simulateStudentLeaving() {
         val currentList = _onlineStudents.value.toMutableList()

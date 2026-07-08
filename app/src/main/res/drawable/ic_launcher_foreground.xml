@@ -1,8 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/img_app_icon_fg"
-        android:gravity="center" />
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- We center the icon in the 66dp safe zone (between x=21 to 87, y=21 to 87) -->
+    <!-- Mortarboard Cap / Graduation Cap -->
+    <path
+        android:fillColor="#4F46E5"
+        android:pathData="M54,26 L26,38 L54,50 L82,38 Z" />
+    
+    <!-- Tassel -->
+    <path
+        android:fillColor="#4F46E5"
+        android:pathData="M72,39 L72,58 C72,60 70,61 68,61 C66,61 65,60 65,58 L65,39" />
+    <path
+        android:fillColor="#FBBF24"
+        android:pathData="M63,57 H70 V61 H63 Z" />
+
+    <!-- Cap Base / Skullcap -->
+    <path
+        android:fillColor="#312E81"
+        android:pathData="M35,44 V52 C35,58 43,62 54,62 C65,62 73,58 73,52 V44 L54,52 Z" />
+
+    <!-- Open Book underneath symbolizing knowledge -->
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M54,74 C48,70 38,70 28,72 V84 C38,82 48,82 54,86 C60,82 70,82 80,84 V72 C70,70 60,70 54,74 Z" />
+</vector>

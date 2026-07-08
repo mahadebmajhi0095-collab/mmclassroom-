@@ -117,6 +117,11 @@ fun LiveClassScreen(
     var showQuizDialog by remember { mutableStateOf(false) }
     var activeLiveTab by remember { mutableStateOf("BOARD") }
 
+    var isMicMuted by remember { mutableStateOf(false) }
+    var isCameraOff by remember { mutableStateOf(false) }
+    var isSpeakerphoneOn by remember { mutableStateOf(true) }
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+
     // Drawing variables
     var currentPathPoints = remember { mutableStateListOf<Offset>() }
 
@@ -784,86 +789,225 @@ fun LiveClassScreen(
                         shape = RoundedCornerShape(16.dp),
                         border = BorderStroke(2.dp, MaterialTheme.colorScheme.outline)
                     ) {
-                        LiveVideoConferenceLayout(classroom, user, viewModel, context)
+                        LiveVideoConferenceLayout(
+                            classroom = classroom,
+                            user = user,
+                            viewModel = viewModel,
+                            context = context,
+                            isMicMuted = isMicMuted,
+                            onMicMutedChange = { isMicMuted = it },
+                            isCameraOff = isCameraOff,
+                            onCameraOffChange = { isCameraOff = it },
+                            isSpeakerphoneOn = isSpeakerphoneOn,
+                            onSpeakerphoneOnChange = { isSpeakerphoneOn = it }
+                        )
                     }
                 }
 
                 if (activeLiveTab == "BOARD") {
-                    // SECTION 2: CANVAS CONTROLS (Colors, Eraser, Undo, Clear)
-                    Row(
+                    // SECTION 2: CANVAS CONTROLS (Colors, Pen, Eraser, Size, Undo, Clear, Simulation)
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Color Palette
-                        val colors = listOf(Color.White, Color.Yellow, Color.Green, Color.Cyan, Color.Red, Color.Magenta)
+                        // ROW 1: TOOLS (Pen & Eraser) + Color Palette
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            colors.forEach { col ->
-                                // Map black for Whiteboard since White is default blackboard color
-                                val mappedCol = if (col == Color.White && boardStyle == "WHITEBOARD") Color.Black else col
-                                val isSelected = currentColor == mappedCol && !isEraser
-                                val borderCol = if (boardStyle == "WHITEBOARD") Color.LightGray else Color.White
-                                Box(
+                            // Active Tools Selector (Pen & Eraser)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Pen Tool Button
+                                IconButton(
+                                    onClick = { viewModel.enableEraser(false) },
                                     modifier = Modifier
-                                        .size(28.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isSelected) borderCol else Color.Transparent)
-                                        .padding(if (isSelected) 3.dp else 0.dp)
-                                        .clip(CircleShape)
-                                        .background(mappedCol)
-                                        .clickable { viewModel.selectColor(mappedCol) }
-                                        .testTag("color_${mappedCol.value}")
-                                )
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (!isEraser) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.secondaryContainer
+                                        )
+                                        .testTag("tool_pen")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Brush,
+                                        contentDescription = "Pen Tool",
+                                        tint = if (!isEraser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+
+                                // Eraser Tool Button
+                                IconButton(
+                                    onClick = { viewModel.enableEraser(true) },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isEraser) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.secondaryContainer
+                                        )
+                                        .testTag("eraser_tool")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CleaningServices,
+                                        contentDescription = "Eraser Tool",
+                                        tint = if (isEraser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
 
-                            // Eraser Tool
-                            IconButton(
-                                onClick = { viewModel.enableEraser(!isEraser) },
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isEraser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer)
-                                    .testTag("eraser_tool")
+                            // Color Palette (Horizontal color circles)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.CleaningServices,
-                                    contentDescription = "Eraser",
-                                    tint = if (isEraser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                                val colors = listOf(Color.White, Color.Yellow, Color.Green, Color.Cyan, Color.Red, Color.Magenta)
+                                colors.forEach { col ->
+                                    val mappedCol = if (col == Color.White && boardStyle == "WHITEBOARD") Color.Black else col
+                                    val isSelected = currentColor == mappedCol && !isEraser
+                                    val borderCol = if (boardStyle == "WHITEBOARD") Color.LightGray else Color.White
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) borderCol else Color.Transparent)
+                                            .padding(if (isSelected) 2.dp else 0.dp)
+                                            .clip(CircleShape)
+                                            .background(mappedCol)
+                                            .clickable { viewModel.selectColor(mappedCol) }
+                                            .testTag("color_${mappedCol.value}")
+                                    )
+                                }
                             }
                         }
 
-                        // Undo & Clear
+                        // ROW 2: Stroke Width (Brush sizes) + History controls + Real-time Student Annotation Sim
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(
-                                onClick = { viewModel.undoDrawing() },
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.secondaryContainer)
-                                    .testTag("draw_undo")
+                            // Brush size selections
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Undo, contentDescription = "Undo", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Text(
+                                    text = "Size:", 
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 11.sp, 
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+
+                                val sizes = listOf(
+                                    Triple(6f, "S", "width_small"),
+                                    Triple(12f, "M", "width_medium"),
+                                    Triple(20f, "L", "width_large"),
+                                    Triple(32f, "XL", "width_xlarge")
+                                )
+
+                                sizes.forEach { (sz, label, tag) ->
+                                    val isSizeSelected = strokeWidth == sz
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isSizeSelected) MaterialTheme.colorScheme.primary 
+                                                else MaterialTheme.colorScheme.surfaceVariant
+                                            )
+                                            .clickable { viewModel.selectStrokeWidth(sz) }
+                                            .testTag(tag),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSizeSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
 
-                            IconButton(
-                                onClick = { viewModel.clearDrawing() },
-                                modifier = Modifier
-                                    .size(30.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFFFFEBEE))
-                                    .testTag("draw_clear")
+                            // Undo, Clear, & Real-time student draw interactive simulation
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Clear Board", tint = Color(0xFFC62828), modifier = Modifier.size(16.dp))
+                                // Simulate real-time interaction
+                                Button(
+                                    onClick = {
+                                        viewModel.simulateStudentDrawing()
+                                        Toast.makeText(
+                                            context, 
+                                            "📝 Student annotation added in real-time!", 
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier
+                                        .height(28.dp)
+                                        .testTag("btn_student_draw")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Gesture,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Student Draw", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // Undo button
+                                IconButton(
+                                    onClick = { viewModel.undoDrawing() },
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.secondaryContainer)
+                                        .testTag("draw_undo")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Undo, 
+                                        contentDescription = "Undo", 
+                                        tint = MaterialTheme.colorScheme.primary, 
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+
+                                // Clear button
+                                IconButton(
+                                    onClick = { viewModel.clearDrawing() },
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFFFEBEE))
+                                        .testTag("draw_clear")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete, 
+                                        contentDescription = "Clear Board", 
+                                        tint = Color(0xFFC62828), 
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -921,6 +1065,23 @@ fun LiveClassScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
+                            } else if (isMicMuted) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier
+                                        .background(MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                        .testTag("live_mic_muted_indicator")
+                                ) {
+                                    Icon(Icons.Default.MicOff, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(12.dp))
+                                    Text(
+                                        text = "Mic Muted",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
 
@@ -946,22 +1107,67 @@ fun LiveClassScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // Microphone/Voice Button (Press to speak)
+                                // Microphone Mute/Unmute Toggle Button with Visual Indicator
                                 IconButton(
                                     onClick = {
-                                        viewModel.sendVoiceMessage()
-                                        Toast.makeText(context, "🎤 Simulated 4s voice transmission started!", Toast.LENGTH_SHORT).show()
+                                        isMicMuted = !isMicMuted
+                                        audioManager.isMicrophoneMute = isMicMuted
+                                        Toast.makeText(
+                                            context,
+                                            if (isMicMuted) "🎤 Microphone muted" else "🎤 Microphone unmuted",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     },
                                     modifier = Modifier
                                         .size(46.dp)
                                         .clip(CircleShape)
-                                        .background(if (isVoiceActive) Color(0xFFD32F2F) else MaterialTheme.colorScheme.primaryContainer)
+                                        .background(
+                                            if (isMicMuted) MaterialTheme.colorScheme.errorContainer 
+                                            else Color(0xFFE8F5E9)
+                                        )
+                                        .border(
+                                            width = 1.5.dp,
+                                            color = if (isMicMuted) MaterialTheme.colorScheme.error 
+                                                    else Color(0xFF2E7D32),
+                                            shape = CircleShape
+                                        )
+                                        .testTag("live_chat_mic_mute_toggle_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = if (isMicMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                                        contentDescription = "Toggle Microphone Mute",
+                                        tint = if (isMicMuted) MaterialTheme.colorScheme.onErrorContainer 
+                                               else Color(0xFF2E7D32),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                // Microphone/Voice Button (Press to speak)
+                                IconButton(
+                                    onClick = {
+                                        if (isMicMuted) {
+                                            Toast.makeText(context, "🎤 Cannot transmit voice while microphone is muted! Please unmute first.", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            viewModel.sendVoiceMessage()
+                                            Toast.makeText(context, "🎤 Simulated 4s voice transmission started!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .size(46.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isVoiceActive) Color(0xFFD32F2F) 
+                                            else if (isMicMuted) MaterialTheme.colorScheme.surfaceVariant
+                                            else MaterialTheme.colorScheme.primaryContainer
+                                        )
                                         .testTag("live_mic_btn")
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.Mic,
+                                        imageVector = Icons.Default.RecordVoiceOver,
                                         contentDescription = "Voice Talk",
-                                        tint = if (isVoiceActive) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
+                                        tint = if (isVoiceActive) Color.White 
+                                               else if (isMicMuted) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                               else MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 }
 
@@ -1399,12 +1605,15 @@ fun LiveVideoConferenceLayout(
     classroom: ClassroomEntity?,
     user: UserEntity?,
     viewModel: ClassroomViewModel,
-    context: Context
+    context: Context,
+    isMicMuted: Boolean,
+    onMicMutedChange: (Boolean) -> Unit,
+    isCameraOff: Boolean,
+    onCameraOffChange: (Boolean) -> Unit,
+    isSpeakerphoneOn: Boolean,
+    onSpeakerphoneOnChange: (Boolean) -> Unit
 ) {
     var videoMode by remember { mutableStateOf("SIMULATOR") } // "JITSI" or "SIMULATOR"
-    var isMicMuted by remember { mutableStateOf(false) }
-    var isCameraOff by remember { mutableStateOf(false) }
-    var isSpeakerphoneOn by remember { mutableStateOf(true) }
 
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
@@ -1560,11 +1769,12 @@ fun LiveVideoConferenceLayout(
             // Mic Toggle
             IconButton(
                 onClick = {
-                    isMicMuted = !isMicMuted
-                    audioManager.isMicrophoneMute = isMicMuted
+                    val newValue = !isMicMuted
+                    onMicMutedChange(newValue)
+                    audioManager.isMicrophoneMute = newValue
                     Toast.makeText(
                         context, 
-                        if (isMicMuted) "Microphone muted" else "Microphone unmuted", 
+                        if (newValue) "Microphone muted" else "Microphone unmuted", 
                         Toast.LENGTH_SHORT
                     ).show()
                 },
@@ -1584,10 +1794,11 @@ fun LiveVideoConferenceLayout(
             // Camera Toggle
             IconButton(
                 onClick = {
-                    isCameraOff = !isCameraOff
+                    val newValue = !isCameraOff
+                    onCameraOffChange(newValue)
                     Toast.makeText(
                         context, 
-                        if (isCameraOff) "Camera feed disabled" else "Camera feed active", 
+                        if (newValue) "Camera feed disabled" else "Camera feed active", 
                         Toast.LENGTH_SHORT
                     ).show()
                 },
@@ -1607,11 +1818,12 @@ fun LiveVideoConferenceLayout(
             // Speaker Toggle (Routing audio output using AudioManager)
             IconButton(
                 onClick = {
-                    isSpeakerphoneOn = !isSpeakerphoneOn
-                    audioManager.isSpeakerphoneOn = isSpeakerphoneOn
+                    val newValue = !isSpeakerphoneOn
+                    onSpeakerphoneOnChange(newValue)
+                    audioManager.isSpeakerphoneOn = newValue
                     Toast.makeText(
                         context, 
-                        if (isSpeakerphoneOn) "Output routed to Speakerphone" else "Output routed to Earpiece", 
+                        if (newValue) "Output routed to Speakerphone" else "Output routed to Earpiece", 
                         Toast.LENGTH_SHORT
                     ).show()
                 },
